@@ -1,0 +1,70 @@
+name: Training Pipeline (Daily)
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # every day at 02:00 UTC
+  workflow_dispatch:        # allow manual trigger
+
+jobs:
+  run-training-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download latest features artifact
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: feature_pipeline.yml
+          name_is_regexp: true
+          name: "features-.*"
+          path: data/processed/
+          if_no_artifact_found: warn
+        continue-on-error: true
+
+      - name: Run backfill if no data (first-time setup)
+        env:
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+          CITY_NAME:         ${{ vars.CITY_NAME }}
+        run: |
+          if [ ! -f data/processed/features.csv ]; then
+            echo "No features found — running 90-day backfill..."
+            python -m src.feature_pipeline.pipeline --backfill --days 90
+          fi
+
+      - name: Train models
+        env:
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+        run: python -m src.training_pipeline.train
+
+      - name: Generate SHAP explanations
+        run: python -m src.training_pipeline.explainability
+        continue-on-error: true
+
+      - name: Upload trained models
+        uses: actions/upload-artifact@v4
+        with:
+          name: models-${{ github.run_id }}
+          path: models/
+          retention-days: 30
+
+      - name: Upload SHAP plots
+        uses: actions/upload-artifact@v4
+        with:
+          name: shap-plots-${{ github.run_id }}
+          path: data/processed/plots/
+          retention-days: 30
+          if-no-files-found: warn

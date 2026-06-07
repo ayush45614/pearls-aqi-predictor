@@ -1,0 +1,44 @@
+name: Feature Pipeline (Hourly)
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # every hour at :00
+  workflow_dispatch:        # allow manual trigger
+
+jobs:
+  run-feature-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run feature pipeline
+        env:
+          AQICN_API_KEY:       ${{ secrets.AQICN_API_KEY }}
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+          HOPSWORKS_API_KEY:   ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT:   ${{ secrets.HOPSWORKS_PROJECT }}
+          CITY_NAME:           ${{ vars.CITY_NAME }}
+          CITY_LAT:            ${{ vars.CITY_LAT }}
+          CITY_LON:            ${{ vars.CITY_LON }}
+          AQICN_CITY_SLUG:     ${{ vars.AQICN_CITY_SLUG }}
+        run: python -m src.feature_pipeline.pipeline
+
+      - name: Upload feature artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: features-${{ github.run_id }}
+          path: data/processed/features.csv
+          retention-days: 7
+          if-no-files-found: warn
